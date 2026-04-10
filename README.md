@@ -74,7 +74,7 @@ sudo mn --topo single,4 --controller remote,ip=127.0.0.1,port=6633 --switch ovsk
 ```
 
 ### Controller Running
-![Controller Running](controller.png)
+
 <img width="1600" height="641" alt="image" src="https://github.com/user-attachments/assets/3be9f48f-6960-4a8b-9ac2-b81493895555" />
 
 
@@ -94,8 +94,6 @@ mininet> pingall
 Results: 0% dropped (12/12 received)
 ```
 
-![Normal Connectivity](normal.png)
-
 ---
 
 ### Scenario 2 – Link Failure Detection
@@ -113,7 +111,6 @@ h2 -> X h3 h4      ← rest of network still works
 Results: 50% dropped (6/12 received)
 ```
 
-![Link Failure](failure.png)
 
 ---
 
@@ -131,7 +128,6 @@ mininet> pingall
 Results: 0% dropped (12/12 received)
 ```
 
-![Recovery](recovery.png)
 
 ---
 
