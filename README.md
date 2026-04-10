@@ -1,43 +1,33 @@
 # SDN Link Failure Detection and Recovery
 
-> **Course Project** | SDN Mininet Simulation | OpenFlow 1.3 + Ryu Controller
+> **Course Project** | SDN Mininet Simulation | OpenFlow 1.0 + POX Controller
 
 ---
 
 ## Problem Statement
 
-In traditional networks, link failures require manual intervention or slow convergence of distributed routing protocols (OSPF, STP). In an **SDN architecture**, the centralized controller has a global view of the topology and can instantly detect link failures and reprogram flow rules to restore connectivity — often within seconds.
+In traditional networks, link failures require manual intervention or slow convergence of distributed routing protocols. In an **SDN architecture**, the centralized controller has a global view of the topology and can instantly detect link failures and reprogram flow rules to restore connectivity — often within seconds.
 
 This project implements:
-- **Topology discovery** using LLDP (via Ryu's `--observe-links`)
-- **Link failure detection** via `EventLinkDelete` and `EventOFPPortStatus`
-- **Dynamic flow rule update** — stale flows are deleted immediately on failure
-- **Connectivity recovery** — MAC re-learning routes traffic over alternate paths
-- **Performance measurement** using `ping` (latency) and `iperf` (throughput)
+- **Topology monitoring** — controller tracks all connected switches and ports
+- **Link failure detection** — via `PortStatus` events (LINK DOWN)
+- **Dynamic flow rule update** — stale flows deleted immediately on failure
+- **Connectivity recovery** — MAC re-learning routes traffic automatically
 
 ---
 
 ## Network Topology
 
 ```
-         h1(10.0.0.1)        h2(10.0.0.2)
-              |                    |
-             s1 ────────────────  s2
-              |  \              /  |
-              |   \            /   |
-             s3 ────────────── s4
-              |                    |
-         h3(10.0.0.3)        h4(10.0.0.4)
+        h1   h2   h3   h4
+         \    |    |   /
+          \   |    |  /
+              s1
 ```
 
-**Links:**
-| Link | Purpose |
-|------|---------|
-| h1-s1, h2-s2, h3-s3, h4-s4 | Host access links (100 Mbps, 2ms) |
-| s1-s2, s2-s4, s4-s3, s3-s1 | Ring backbone |
-| s1-s4 | Diagonal alternate path |
-
-The diagonal link `s1-s4` ensures that even if `s1-s2` fails, `h1` can still reach `h2` via `s1 → s4 → s2`.
+- 1 switch (s1)
+- 4 hosts (h1, h2, h3, h4)
+- All hosts connected to the single switch
 
 ---
 
@@ -45,9 +35,7 @@ The diagonal link `s1-s4` ensures that even if `s1-s2` fails, `h1` can still rea
 
 ```
 sdn_link_failure/
-├── controller.py     # Ryu OpenFlow 1.3 controller (main logic)
-├── topology.py       # Mininet topology + automated test scenarios
-├── run.sh            # Convenience runner script
+├── link_failure.py   # POX controller (main logic)
 └── README.md         # This file
 ```
 
@@ -56,52 +44,39 @@ sdn_link_failure/
 ## Prerequisites
 
 ```bash
-# Python packages
-pip install ryu networkx
+# Mininet
+sudo apt install mininet openvswitch-switch
 
-# System packages
-sudo apt install mininet openvswitch-switch wireshark iperf
+# POX (no pip needed, just clone)
+git clone https://github.com/noxrepo/pox.git
 ```
 
-> Tested on Ubuntu 20.04 / 22.04
+> Tested on Debian Trixie with Python 3.13
 
 ---
 
 ## Setup & Execution
 
-### Option A – Using the runner script (recommended)
-
+**Step 1 — Copy controller into POX:**
 ```bash
-# Make executable
-chmod +x run.sh
-
-# Interactive mode (Mininet CLI)
-./run.sh
-
-# Run both test scenarios automatically
-./run.sh --test both
-
-# Run only link failure scenario
-./run.sh --test scenario2
-
-# Run iperf test
-./run.sh --iperf
-
-# Clean up Mininet state
-./run.sh --clean
+cp link_failure.py ~/pox/ext/
 ```
 
-### Option B – Manual (two terminals)
-
-**Terminal 1 – Start Ryu controller:**
+**Step 2 — Terminal 1: Start POX controller:**
 ```bash
-ryu-manager --observe-links controller.py
+cd ~/pox
+python3 pox.py link_failure openflow.discovery
 ```
 
-**Terminal 2 – Start Mininet:**
+**Step 3 — Terminal 2: Start Mininet:**
 ```bash
-sudo python3 topology.py
+sudo mn --topo single,4 --controller remote,ip=127.0.0.1,port=6633 --switch ovsk,protocols=OpenFlow10
 ```
+
+### Controller Running
+![Controller Running](controller.png)
+<img width="1600" height="641" alt="image" src="https://github.com/user-attachments/assets/3be9f48f-6960-4a8b-9ac2-b81493895555" />
+
 
 ---
 
@@ -109,50 +84,54 @@ sudo python3 topology.py
 
 ### Scenario 1 – Normal Connectivity
 
-Verifies that all 4 hosts can reach each other under normal conditions.
-
-```bash
-./run.sh --test scenario1
+```
+mininet> pingall
 ```
 
-**Expected output:**
+<img width="998" height="306" alt="image" src="https://github.com/user-attachments/assets/5d89b03a-df9f-4d7b-92d1-d2123a3278fc" />
+
 ```
-  ✓ PASS  h1 (10.0.0.1) --> h2 (10.0.0.2)  | 0% packet loss
-  ✓ PASS  h1 (10.0.0.1) --> h3 (10.0.0.3)  | 0% packet loss
-  ✓ PASS  h1 (10.0.0.1) --> h4 (10.0.0.4)  | 0% packet loss
-  ...
-  Result: 6/6 paths reachable
+Results: 0% dropped (12/12 received)
 ```
+
+![Normal Connectivity](normal.png)
 
 ---
 
-### Scenario 2 – Link Failure & Recovery
+### Scenario 2 – Link Failure Detection
 
-Simulates failure of link `s1 ↔ s2` and verifies that traffic between `h1` and `h2` recovers via the alternate path `s1 → s4 → s2`.
-
-```bash
-./run.sh --test scenario2
+```
+mininet> link s1 h1 down
+mininet> pingall
 ```
 
-**Expected output:**
+<img width="898" height="332" alt="image" src="https://github.com/user-attachments/assets/8c52cc71-96e2-4258-8155-b3f81c5f9e8b" />
+
 ```
-[Step A] Baseline – ping h1 -> h2 before any failure
-  Before failure: 0% packet loss
-
-[Step B] Bringing DOWN link s1 <-> s2
-  Interface s1-eth2 (s1<->s2) brought DOWN
-
-[Step C] Post-failure – ping h1 -> h2 (expecting recovery)
-  After  failure: 0% packet loss    ← recovered via s1->s4->s2
-
-[Step D] Verify h1 -> h3 (should be unaffected)
-  h1 -> h3: 0% packet loss
-
-[Step E] Restoring link s1 <-> s2
-  After restore: 0% packet loss
-
-  Recovery Result: ✓ PASS – Connectivity restored via alternate path
+h1 -> X X X        ← h1 isolated (link cut)
+h2 -> X h3 h4      ← rest of network still works
+Results: 50% dropped (6/12 received)
 ```
+
+![Link Failure](failure.png)
+
+---
+
+### Scenario 3 – Recovery
+
+```
+mininet> link s1 h1 up
+mininet> pingall
+```
+
+<img width="1008" height="338" alt="image" src="https://github.com/user-attachments/assets/fd735b14-a378-47eb-bbe3-9a9457813515" />
+
+
+```
+Results: 0% dropped (12/12 received)
+```
+
+![Recovery](recovery.png)
 
 ---
 
@@ -162,52 +141,17 @@ Simulates failure of link `s1 ↔ s2` and verifies that traffic between `h1` and
 Switch connects
     └─→ Install table-miss rule (priority 0, send to controller)
 
-Topology discovery (LLDP)
-    └─→ EventLinkAdd → graph.add_edge()
-
 Packet arrives (unknown destination)
-    └─→ EventOFPPacketIn
+    └─→ PacketIn event
          ├─→ Learn src_mac → in_port
          └─→ Flood or install flow rule
 
 Link goes down
-    └─→ EventLinkDelete
+    └─→ PortStatus event (LINK DOWN)
          ├─→ Log failure timestamp
-         ├─→ graph.remove_edge()
-         ├─→ Delete stale flows on affected ports (OFPFC_DELETE)
+         ├─→ Delete stale flows on affected port
          ├─→ Clear MAC table
-         └─→ Re-learning happens automatically → traffic uses alternate path
-```
-
----
-
-## Performance Metrics
-
-| Metric | Tool | Command |
-|--------|------|---------|
-| Latency | ping | `h1 ping -c 10 h2` |
-| Throughput | iperf | `iperf -s` / `iperf -c 10.0.0.2 -t 10` |
-| Flow tables | ovs-ofctl | `ovs-ofctl -O OpenFlow13 dump-flows s1` |
-| Packet stats | ovs-ofctl | `ovs-ofctl -O OpenFlow13 dump-ports s1` |
-
-### Useful Mininet CLI commands
-
-```bash
-# Inside Mininet CLI
-mininet> pingall                    # test all-pairs connectivity
-mininet> h1 ping -c 5 h2            # ping between hosts
-mininet> h2 iperf -s &              # start iperf server
-mininet> h1 iperf -c 10.0.0.2 -t 5 # iperf throughput test
-mininet> s1 ovs-ofctl -O OpenFlow13 dump-flows s1  # flow table
-mininet> link s1 s2 down            # bring down a link
-mininet> link s1 s2 up              # restore a link
-```
-
-### Wireshark capture
-
-```bash
-# Capture on s1's interface to observe LLDP and OpenFlow messages
-sudo wireshark -i s1-eth1 &
+         └─→ Re-learning happens automatically
 ```
 
 ---
@@ -217,21 +161,30 @@ sudo wireshark -i s1-eth1 &
 | Concept | Where Used |
 |---------|-----------|
 | Table-miss rule (priority 0) | Initial setup on every switch |
-| `packet_in` event | MAC learning, flow installation |
+| `PacketIn` event | MAC learning, flow installation |
 | Match fields: `in_port`, `eth_dst` | Flow rule matching |
 | `OFPP_FLOOD` action | Unknown destination handling |
 | `OFPFC_DELETE` command | Removing stale flows on failed port |
 | `idle_timeout`, `hard_timeout` | Flow expiry (30s idle, 120s hard) |
-| Port status events | Secondary failure detection |
-| LLDP topology discovery | `--observe-links` flag |
+| Port status events | Link failure detection |
+
+---
+
+## Useful Mininet CLI Commands
+
+```bash
+mininet> pingall                     # test all-pairs connectivity
+mininet> h1 ping -c 5 h2             # ping between two hosts
+mininet> link s1 h1 down             # simulate link failure
+mininet> link s1 h1 up               # restore link
+mininet> sh ovs-ofctl dump-flows s1  # view flow table
+```
 
 ---
 
 ## References
 
-1. Ryu SDN Framework Documentation – https://ryu.readthedocs.io/
-2. OpenFlow 1.3 Specification – https://opennetworking.org/wp-content/uploads/2014/10/openflow-spec-v1.3.0.pdf
+1. POX SDN Controller – https://github.com/noxrepo/pox
+2. OpenFlow 1.0 Specification – https://opennetworking.org
 3. Mininet Documentation – http://mininet.org/
-4. NetworkX Graph Library – https://networkx.org/
-5. Open vSwitch Documentation – https://docs.openvswitch.org/
-6. Feamster, N., Rexford, J., Zegura, E. (2014). *The Road to SDN: An Intellectual History of Programmable Networks*. ACM SIGCOMM Computer Communication Review.
+4. Open vSwitch Documentation – https://docs.openvswitch.org/
